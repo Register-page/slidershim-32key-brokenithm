@@ -77,7 +77,7 @@ impl Config {
     info!("Config saving...");
     let config_path = system::get_config_path()?;
     info!("Config saving to {:?}", config_path);
-    fs::write(config_path.as_path(), self.raw.as_str()).unwrap();
+    fs::write(config_path.as_path(), self.raw.as_str()).ok()?;
     info!("Config saved");
 
     Some(())

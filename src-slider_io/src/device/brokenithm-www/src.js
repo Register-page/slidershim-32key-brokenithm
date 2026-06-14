@@ -70,6 +70,7 @@ const compileKeys = () => {
   keys = document.getElementsByClassName("key");
   airKeys = [];
   touchKeys = [];
+  allKeys = [];
   for (var i = 0; i < keys.length; i++) {
     const compiledKey = compileKey(keys[i]);
     if (compiledKey.kflag < 32) {
@@ -83,7 +84,8 @@ const compileKeys = () => {
   touchKeys.memo = {};
   airKeys.memo = {};
 
-  touchKeys.getAxis = (x, y) => x;
+  touchKeys.getAxis = (x, y) =>
+    String(Math.floor(x)) + ":" + String(Math.floor(y));
   airKeys.getAxis = (x, y) => y;
 
   var getKey = function (x, y) {
@@ -112,16 +114,23 @@ const compileKeys = () => {
     airKeys.getKey(airKeys[0].left, i);
   }
 
+  var touchTop = touchKeys[0].top;
+  var touchBottom = touchKeys[0].bottom;
+  for (var i = 1; i < touchKeys.length; i++) {
+    touchTop = Math.min(touchTop, touchKeys[i].top);
+    touchBottom = Math.max(touchBottom, touchKeys[i].bottom);
+  }
+
   if (!config.invert) {
     // Not inverted
     topKeys = airKeys;
     bottomKeys = touchKeys;
-    midline = touchKeys[0].top;
+    midline = touchTop;
   } else {
     // Inverted
     topKeys = touchKeys;
     bottomKeys = airKeys;
-    midline = touchKeys[0].bottom;
+    midline = touchBottom;
   }
 };
 
@@ -167,16 +176,16 @@ function updateTouches(e) {
 
       if (!key) continue;
 
-      setKey(keyFlags, key.kflag, key.isAir);
+      setKey(keyFlags, key.kflag);
 
       if (key.isAir) continue;
 
       if (x < key.almostLeft) {
-        setKey(keyFlags, key.prevKeyKflag, false);
+        setKey(keyFlags, key.prevKeyKflag);
       }
 
       if (key.almostRight < x) {
-        setKey(keyFlags, key.nextKeyKflag, false);
+        setKey(keyFlags, key.nextKeyKflag);
       }
     }
 
@@ -193,7 +202,10 @@ function updateTouches(e) {
       }
     }
 
-    if (keyFlags !== lastState) {
+    var stateChanged = keyFlags.some(function (value, idx) {
+      return value !== lastState[idx];
+    });
+    if (stateChanged) {
       throttledSendKeys(keyFlags);
     }
     lastState = keyFlags;
@@ -203,12 +215,10 @@ function updateTouches(e) {
 }
 const throttledUpdateTouches = throttle(updateTouches, 10);
 
-const setKey = (keyFlags, kflag, isAir) => {
-  var idx = kflag;
-  if (keyFlags[idx] && !isAir) {
-    idx++;
+const setKey = (keyFlags, kflag) => {
+  if (typeof kflag === "number" && 0 <= kflag && kflag < keyFlags.length) {
+    keyFlags[kflag] = 1;
   }
-  keyFlags[idx] = 1;
 };
 
 const sendKeys = (keyFlags) => {
@@ -234,7 +244,14 @@ const wsConnect = () => {
     } else if (e.data == "alive") {
       wsTimeout = 0;
       wsConnected = true;
+      sendKeys(lastState);
     }
+  };
+  ws.onerror = () => {
+    wsConnected = false;
+  };
+  ws.onclose = () => {
+    wsConnected = false;
   };
 };
 const wsWatch = () => {
@@ -311,7 +328,7 @@ const readConfig = (config) => {
     style += `.container, .air-container {flex-flow: column-reverse nowrap;} `;
   }
 
-  var bgColor = config.bgColor || "rbga(0, 0, 0, 0.9)";
+  var bgColor = config.bgColor || "rgba(0, 0, 0, 0.9)";
   if (!config.bgImage) {
     style += `#fullscreen {background: ${bgColor};} `;
   } else {
@@ -329,7 +346,7 @@ const readConfig = (config) => {
   if (typeof config.keyColor === "string") {
     style += `.key[data-active] {background-color: ${config.keyColor};} `;
   }
-  if (typeof config.keyColor === "string") {
+  if (typeof config.lkeyColor === "string") {
     style += `.key.air[data-active] {background-color: ${config.lkeyColor};} `;
   }
   if (typeof config.keyBorderColor === "string") {
@@ -351,7 +368,7 @@ const readConfig = (config) => {
     if (config.lkeyHeight === 0) {
       style += `.air-container {display: none;} `;
     } else {
-      style += `.air-container {flex: ${config.keyHeight};} `;
+      style += `.air-container {flex: ${config.lkeyHeight};} `;
     }
   }
 

@@ -201,7 +201,7 @@ impl KeyboardOutput {
     }; 41];
 
     for i in kb_buf.iter_mut() {
-      let mut inner = unsafe { i.u.ki_mut() };
+      let inner = unsafe { i.u.ki_mut() };
       inner.wVk = 0;
       inner.wScan = 0;
       inner.dwFlags = 0;

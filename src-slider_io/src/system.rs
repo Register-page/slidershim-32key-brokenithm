@@ -18,7 +18,7 @@ pub fn list_ips() -> Result<Vec<String>, Box<dyn Error>> {
 /// Get the %APPDATA% path for config files (and create if it does not already
 /// exist).
 fn get_config_dir() -> Option<Box<PathBuf>> {
-  let project_dir = ProjectDirs::from("me", "impress labs", "slidershim").unwrap();
+  let project_dir = ProjectDirs::from("me", "impress labs", "slidershim")?;
   let config_dir = project_dir.config_dir();
   fs::create_dir_all(config_dir).ok()?;
 
@@ -39,7 +39,7 @@ pub fn get_brokenithm_qr_path(port: Option<u16>) -> Option<Box<PathBuf>> {
       .collect::<Vec<String>>()
       .join(";")
     + "&p="
-    + port.or(Some(1606)).unwrap().to_string().as_str();
+    + port.unwrap_or(1606).to_string().as_str();
   info!("Url generated {}", link);
   let qr = QrCode::new(link).ok()?;
   let image = qr.render::<Luma<u8>>().build();

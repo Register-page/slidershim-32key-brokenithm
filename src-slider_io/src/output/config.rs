@@ -84,7 +84,7 @@ impl PollingRate {
 
 impl OutputMode {
   pub fn from_serde_value(v: &Value) -> Option<Self> {
-    Some(match v["outputMode"].as_str().unwrap() {
+    Some(match v["outputMode"].as_str()? {
       "none" => OutputMode::None,
       "kb-32-tasoller" => OutputMode::Keyboard {
         layout: KeyboardLayout::Tasoller,

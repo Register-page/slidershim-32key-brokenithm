@@ -9,7 +9,15 @@ use hyper::{
 };
 use log::{error, info};
 use phf::phf_map;
-use std::{convert::Infallible, future::Future, net::SocketAddr};
+use std::{
+  convert::Infallible,
+  future::Future,
+  net::SocketAddr,
+  sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+  },
+};
 use tokio::{
   select,
   sync::mpsc,
@@ -22,11 +30,44 @@ use crate::{device::config::BrokenithmSpec, shared::worker::AsyncHaltableJob, st
 
 // https://levelup.gitconnected.com/handling-websocket-and-http-on-the-same-port-with-rust-f65b770722c9
 
+enum BrokenithmMessage {
+  Alive,
+  Input { ground: [u8; 32], air: [u8; 6] },
+}
+
+fn parse_brokenithm_message(message: &str) -> Option<BrokenithmMessage> {
+  if message == "alive?" {
+    return Some(BrokenithmMessage::Alive);
+  }
+
+  let bytes = message.as_bytes();
+  if bytes.len() != 39 || bytes[0] != b'b' || !bytes[1..].iter().all(|b| matches!(b, b'0' | b'1')) {
+    return None;
+  }
+
+  let mut ground = [0; 32];
+  let mut air = [0; 6];
+  for (target, source) in ground.iter_mut().zip(bytes[1..33].iter()) {
+    *target = if *source == b'1' { 255 } else { 0 };
+  }
+  for (target, source) in air.iter_mut().zip(bytes[33..39].iter()) {
+    *target = if *source == b'1' { 1 } else { 0 };
+  }
+
+  Some(BrokenithmMessage::Input { ground, air })
+}
+
+fn reset_input(state: &SliderState) {
+  let mut input_handle = state.input.lock();
+  input_handle.ground.fill(0);
+  input_handle.air.fill(0);
+}
+
 async fn error_response() -> Result<Response<Body>, Infallible> {
   Ok(
     Response::builder()
       .status(StatusCode::NOT_FOUND)
-      .body(Body::from(format!("Not found")))
+      .body(Body::from("Not found"))
       .unwrap(),
   )
 }
@@ -71,6 +112,8 @@ async fn handle_brokenithm(
   ws_stream: WebSocketStream<Upgraded>,
   state: SliderState,
   lights_enabled: bool,
+  active_session: Arc<AtomicUsize>,
+  session_id: usize,
 ) {
   let (mut ws_write, mut ws_read) = ws_stream.split();
 
@@ -78,17 +121,9 @@ async fn handle_brokenithm(
 
   let write_task = async move {
     // info!("Websocket write task open");
-    loop {
-      match msg_read.recv().await {
-        Some(msg) => match ws_write.send(msg).await.ok() {
-          Some(_) => {}
-          None => {
-            break;
-          }
-        },
-        None => {
-          break;
-        }
+    while let Some(msg) = msg_read.recv().await {
+      if ws_write.send(msg).await.is_err() {
+        break;
       }
     }
     // info!("Websocket write task done");
@@ -96,63 +131,38 @@ async fn handle_brokenithm(
 
   let msg_write_handle = msg_write.clone();
   let state_handle = state.clone();
+  let read_active_session = active_session.clone();
   let read_task = async move {
     // info!("Websocket read task open");
-    loop {
-      match ws_read.next().await {
-        Some(msg) => match msg {
-          Ok(msg) => match msg {
-            Message::Text(msg) => {
-              let chars = msg.chars().collect::<Vec<char>>();
-
-              match chars.len() {
-                6 => {
-                  if chars[0] == 'a' {
-                    msg_write_handle
-                      .send(Message::Text("alive".to_string()))
-                      .ok();
-                  }
-                }
-                39 => {
-                  if chars[0] == 'b' {
-                    let mut input_handle = state_handle.input.lock();
-                    for (idx, c) in chars[1..33].iter().enumerate() {
-                      input_handle.ground[idx] = match *c == '1' {
-                        false => 0,
-                        true => 255,
-                      }
-                    }
-                    for (idx, c) in chars[33..39].iter().enumerate() {
-                      input_handle.air[idx] = match *c == '1' {
-                        false => 0,
-                        true => 1,
-                      }
-                    }
-                  }
-                }
-                _ => {
-                  break;
-                }
+    while let Some(msg) = ws_read.next().await {
+      match msg {
+        Ok(msg) => match msg {
+          Message::Text(msg) => match parse_brokenithm_message(&msg) {
+            Some(BrokenithmMessage::Alive) => {
+              msg_write_handle
+                .send(Message::Text("alive".to_string()))
+                .ok();
+            }
+            Some(BrokenithmMessage::Input { ground, air }) => {
+              if read_active_session.load(Ordering::SeqCst) == session_id {
+                let mut input_handle = state_handle.input.lock();
+                input_handle.ground = ground;
+                input_handle.air = air;
               }
             }
-            Message::Close(_) => {
-              info!("Websocket connection closed");
-              let mut input_handle = state_handle.input.lock();
-              input_handle.ground.fill(0);
-              input_handle.air.fill(0);
+            None => {
+              error!("Invalid Brokenithm message");
               break;
             }
-            _ => {}
           },
-          Err(e) => {
-            error!("Websocket connection error: {}", e);
-            let mut input_handle = state_handle.input.lock();
-            input_handle.ground.fill(0);
-            input_handle.air.fill(0);
+          Message::Close(_) => {
+            info!("Websocket connection closed");
             break;
           }
+          _ => {}
         },
-        None => {
+        Err(e) => {
+          error!("Websocket connection error: {}", e);
           break;
         }
       }
@@ -175,7 +185,7 @@ async fn handle_brokenithm(
           let mut lights_data = vec![0; 93];
           {
             let lights_handle = state_handle.lights.lock();
-            (&mut lights_data).copy_from_slice(&lights_handle.ground);
+            lights_data.copy_from_slice(&lights_handle.ground);
           }
           msg_write_handle.send(Message::Binary(lights_data)).ok();
 
@@ -190,18 +200,25 @@ async fn handle_brokenithm(
       };
     }
   }
+
+  if active_session.load(Ordering::SeqCst) == session_id {
+    reset_input(&state);
+  }
 }
 
 async fn handle_websocket(
   mut request: Request<Body>,
   state: SliderState,
   lights_enabled: bool,
+  active_session: Arc<AtomicUsize>,
 ) -> Result<Response<Body>, Infallible> {
-  let res = match handshake::server::create_response_with_body(&request, || Body::empty()) {
+  let res = match handshake::server::create_response_with_body(&request, Body::empty) {
     Ok(res) => {
       tokio::spawn(async move {
         match upgrade::on(&mut request).await {
           Ok(upgraded) => {
+            let session_id = active_session.fetch_add(1, Ordering::SeqCst) + 1;
+            reset_input(&state);
             let ws_stream = WebSocketStream::from_raw_socket(
               upgraded,
               tokio_tungstenite::tungstenite::protocol::Role::Server,
@@ -209,7 +226,7 @@ async fn handle_websocket(
             )
             .await;
 
-            handle_brokenithm(ws_stream, state, lights_enabled).await;
+            handle_brokenithm(ws_stream, state, lights_enabled, active_session, session_id).await;
           }
 
           Err(e) => {
@@ -237,6 +254,7 @@ async fn handle_request(
   state: SliderState,
   spec: BrokenithmSpec,
   lights_enabled: bool,
+  active_session: Arc<AtomicUsize>,
 ) -> Result<Response<Body>, Infallible> {
   let method = request.method();
   let path = request.uri().path();
@@ -259,7 +277,7 @@ async fn handle_request(
       BrokenithmSpec::Nostalgia => serve_file("index-ns.html").await,
     },
     (filename, false) => serve_file(&filename[1..]).await,
-    ("/ws", true) => handle_websocket(request, state, lights_enabled).await,
+    ("/ws", true) => handle_websocket(request, state, lights_enabled, active_session).await,
     _ => error_response().await,
   }
 }
@@ -293,15 +311,25 @@ impl AsyncHaltableJob for BrokenithmJob {
     let state = self.state.clone();
     let spec = self.spec.clone();
     let lights_enabled = self.lights_enabled;
+    let active_session = Arc::new(AtomicUsize::new(0));
     let make_svc = make_service_fn(|conn: &AddrStream| {
       let remote_addr = conn.remote_addr();
       let make_svc_state = state.clone();
       let make_spec = spec.clone();
+      let make_active_session = active_session.clone();
       async move {
         Ok::<_, Infallible>(service_fn(move |request: Request<Body>| {
           let svc_state = make_svc_state.clone();
           let spec = make_spec.clone();
-          handle_request(request, remote_addr, svc_state, spec, lights_enabled)
+          let active_session = make_active_session.clone();
+          handle_request(
+            request,
+            remote_addr,
+            svc_state,
+            spec,
+            lights_enabled,
+            active_session,
+          )
         }))
       }
     });
@@ -319,5 +347,40 @@ impl AsyncHaltableJob for BrokenithmJob {
     if let Err(e) = server.await {
       info!("Brokenithm server stopped: {}", e);
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{parse_brokenithm_message, BrokenithmMessage};
+
+  #[test]
+  fn parses_heartbeat() {
+    assert!(matches!(
+      parse_brokenithm_message("alive?"),
+      Some(BrokenithmMessage::Alive)
+    ));
+  }
+
+  #[test]
+  fn parses_all_ground_and_air_bits() {
+    let message = format!("b{}{}", "10".repeat(16), "101010");
+    match parse_brokenithm_message(&message) {
+      Some(BrokenithmMessage::Input { ground, air }) => {
+        assert_eq!(ground[0], 255);
+        assert_eq!(ground[1], 0);
+        assert_eq!(ground[30], 255);
+        assert_eq!(ground[31], 0);
+        assert_eq!(air, [1, 0, 1, 0, 1, 0]);
+      }
+      _ => panic!("expected input message"),
+    }
+  }
+
+  #[test]
+  fn rejects_malformed_messages() {
+    assert!(parse_brokenithm_message("b000").is_none());
+    assert!(parse_brokenithm_message(&format!("x{}{}", "0".repeat(32), "0".repeat(6))).is_none());
+    assert!(parse_brokenithm_message(&format!("b{}{}", "0".repeat(31), "x".repeat(7))).is_none());
   }
 }

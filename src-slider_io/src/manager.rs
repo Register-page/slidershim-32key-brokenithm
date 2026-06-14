@@ -78,7 +78,9 @@ impl Manager {
   }
 
   pub fn update_config(&self, config: Config) {
-    self.tx_config.send(config).unwrap();
+    if self.tx_config.send(config).is_err() {
+      info!("Manager thread stopped before config update");
+    }
   }
 
   pub fn try_get_state(&self) -> Option<SliderState> {
