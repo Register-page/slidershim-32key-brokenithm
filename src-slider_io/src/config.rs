@@ -36,6 +36,7 @@ impl Config {
       "divaSerialPort": "COM1",
       "divaBrightness": 63,
       "brokenithmPort": 1606,
+      "brokenithmGroundPercent": 50,
       "keyboardSensitivity": 20,
       "keyboardDirectInput": false,
       "outputPolling": "100",

@@ -53,6 +53,17 @@ components if they are missing:
 6. Optionally use Safari's **Add to Home Screen** command and iPad Guided
    Access to prevent accidental navigation.
 
+### Adjust the iPad Areas
+
+When Brokenithm is selected, use **iPad Ground Area** in the PC window to
+change the vertical split:
+
+- A higher percentage makes the bottom 32-cell slider area taller.
+- A lower percentage makes the top six-sensor air area taller.
+- The allowed range is 20% to 80%. The default is 50/50.
+
+Click **Apply**, then refresh the controller page on the iPad.
+
 You can also click **Brokenithm QR** inside slidershim and scan the generated
 QR code.
 

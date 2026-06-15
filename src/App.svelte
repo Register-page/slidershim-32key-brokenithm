@@ -14,6 +14,7 @@
   let divaSerialPort = "COM1";
   let divaBrightness = 63;
   let brokenithmPort = 1606;
+  let brokenithmGroundPercent = 50;
   let keyboardSensitivity = 20;
   let keyboardDirectInput = false;
   let outputPolling = "100";
@@ -71,6 +72,7 @@
       divaSerialPort = payload.divaSerialPort || "COM1";
       divaBrightness = payload.divaBrightness || 63;
       brokenithmPort = payload.brokenithmPort || 1606;
+      brokenithmGroundPercent = payload.brokenithmGroundPercent || 50;
       keyboardSensitivity = payload.keyboardSensitivity || 20;
       keyboardDirectInput = payload.keyboardDirectInput || false;
       outputPolling = payload.outputPolling || "100";
@@ -120,6 +122,10 @@
   async function setConfig() {
     console.log("Updating config");
     console.log(disableAirStrings);
+    brokenithmGroundPercent = Math.max(
+      20,
+      Math.min(80, Number(brokenithmGroundPercent) || 50)
+    );
     await emit(
       "setConfig",
       JSON.stringify({
@@ -130,6 +136,7 @@
         divaSerialPort,
         divaBrightness,
         brokenithmPort,
+        brokenithmGroundPercent,
         keyboardSensitivity,
         keyboardDirectInput,
         outputPolling,
@@ -237,6 +244,38 @@
           />
         </div>
       </div>
+      {#if deviceMode !== "brokenithm-nostalgia"}
+        <div class="row">
+          <div class="label">iPad Ground Area</div>
+          <div class="input">
+            <input
+              type="number"
+              min="20"
+              max="80"
+              step="1"
+              bind:value={brokenithmGroundPercent}
+              on:change={markDirty}
+            />
+          </div>
+        </div>
+        <div class="row">
+          <div class="label" />
+          <div class="input">
+            <input
+              type="range"
+              min="20"
+              max="80"
+              step="1"
+              bind:value={brokenithmGroundPercent}
+              on:input={markDirty}
+            />
+            <div class="comment">
+              Top air: {100 - brokenithmGroundPercent}% / Bottom slider:
+              {brokenithmGroundPercent}%
+            </div>
+          </div>
+        </div>
+      {/if}
       <div class="row">
         <div class="label" />
         <div class="input">

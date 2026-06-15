@@ -28,6 +28,7 @@ pub enum DeviceMode {
     spec: BrokenithmSpec,
     lights_enabled: bool,
     port: u16,
+    ground_percent: u8,
   },
   DivaSlider {
     port: String,
@@ -76,6 +77,7 @@ impl DeviceMode {
         port: u16::try_from(v["brokenithmPort"].as_i64()?)
           .ok()
           .or(Some(1606))?,
+        ground_percent: brokenithm_ground_percent(v),
       },
       "brokenithm-led" => DeviceMode::Brokenithm {
         spec: match v["disableAirStrings"].as_bool()? {
@@ -86,6 +88,7 @@ impl DeviceMode {
         port: u16::try_from(v["brokenithmPort"].as_i64()?)
           .ok()
           .or(Some(1606))?,
+        ground_percent: brokenithm_ground_percent(v),
       },
       "brokenithm-nostalgia" => DeviceMode::Brokenithm {
         spec: BrokenithmSpec::Nostalgia,
@@ -93,6 +96,7 @@ impl DeviceMode {
         port: u16::try_from(v["brokenithmPort"].as_i64()?)
           .ok()
           .or(Some(1606))?,
+        ground_percent: brokenithm_ground_percent(v),
       },
       _ => return None,
     })
@@ -103,5 +107,53 @@ impl DeviceMode {
       DeviceMode::Brokenithm { port, .. } => Some(*port),
       _ => None,
     }
+  }
+}
+
+fn brokenithm_ground_percent(v: &Value) -> u8 {
+  v["brokenithmGroundPercent"]
+    .as_u64()
+    .and_then(|value| u8::try_from(value).ok())
+    .unwrap_or(50)
+    .clamp(20, 80)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{brokenithm_ground_percent, DeviceMode};
+  use serde_json::json;
+
+  #[test]
+  fn old_brokenithm_configs_default_to_equal_areas() {
+    let value = json!({
+      "deviceMode": "brokenithm",
+      "disableAirStrings": false,
+      "brokenithmPort": 1606
+    });
+
+    assert_eq!(brokenithm_ground_percent(&value), 50);
+    assert!(matches!(
+      DeviceMode::from_serde_value(&value),
+      Some(DeviceMode::Brokenithm {
+        ground_percent: 50,
+        ..
+      })
+    ));
+  }
+
+  #[test]
+  fn ipad_ground_area_is_clamped() {
+    assert_eq!(
+      brokenithm_ground_percent(&json!({ "brokenithmGroundPercent": 5 })),
+      20
+    );
+    assert_eq!(
+      brokenithm_ground_percent(&json!({ "brokenithmGroundPercent": 95 })),
+      80
+    );
+    assert_eq!(
+      brokenithm_ground_percent(&json!({ "brokenithmGroundPercent": 65 })),
+      65
+    );
   }
 }

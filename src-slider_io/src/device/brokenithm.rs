@@ -108,6 +108,26 @@ async fn serve_file(path: &str) -> Result<Response<Body>, Infallible> {
   }
 }
 
+fn brokenithm_config_script(ground_percent: u8) -> String {
+  let ground_percent = ground_percent.clamp(20, 80);
+  let air_percent = 100 - ground_percent;
+  let base_config = BROKENITHM_STR_FILES
+    .get("config.js")
+    .map(|(data, _)| *data)
+    .unwrap_or("var config = {};");
+  format!("{base_config}\nconfig.keyHeight = {ground_percent};\nconfig.lkeyHeight = {air_percent};")
+}
+
+async fn serve_config(ground_percent: u8) -> Result<Response<Body>, Infallible> {
+  Ok(
+    Response::builder()
+      .header(header::CONTENT_TYPE, "text/javascript")
+      .header(header::CACHE_CONTROL, "no-store")
+      .body(Body::from(brokenithm_config_script(ground_percent)))
+      .unwrap(),
+  )
+}
+
 async fn handle_brokenithm(
   ws_stream: WebSocketStream<Upgraded>,
   state: SliderState,
@@ -254,6 +274,7 @@ async fn handle_request(
   state: SliderState,
   spec: BrokenithmSpec,
   lights_enabled: bool,
+  ground_percent: u8,
   active_session: Arc<AtomicUsize>,
 ) -> Result<Response<Body>, Infallible> {
   let method = request.method();
@@ -276,6 +297,7 @@ async fn handle_request(
       BrokenithmSpec::GroundOnly => serve_file("index-go.html").await,
       BrokenithmSpec::Nostalgia => serve_file("index-ns.html").await,
     },
+    ("/config.js", false) => serve_config(ground_percent).await,
     (filename, false) => serve_file(&filename[1..]).await,
     ("/ws", true) => handle_websocket(request, state, lights_enabled, active_session).await,
     _ => error_response().await,
@@ -287,6 +309,7 @@ pub struct BrokenithmJob {
   spec: BrokenithmSpec,
   lights_enabled: bool,
   port: u16,
+  ground_percent: u8,
 }
 
 impl BrokenithmJob {
@@ -295,12 +318,14 @@ impl BrokenithmJob {
     spec: &BrokenithmSpec,
     lights_enabled: &bool,
     port: &u16,
+    ground_percent: &u8,
   ) -> Self {
     Self {
       state: state.clone(),
       spec: spec.clone(),
       lights_enabled: *lights_enabled,
       port: *port,
+      ground_percent: (*ground_percent).clamp(20, 80),
     }
   }
 }
@@ -311,6 +336,7 @@ impl AsyncHaltableJob for BrokenithmJob {
     let state = self.state.clone();
     let spec = self.spec.clone();
     let lights_enabled = self.lights_enabled;
+    let ground_percent = self.ground_percent;
     let active_session = Arc::new(AtomicUsize::new(0));
     let make_svc = make_service_fn(|conn: &AddrStream| {
       let remote_addr = conn.remote_addr();
@@ -328,6 +354,7 @@ impl AsyncHaltableJob for BrokenithmJob {
             svc_state,
             spec,
             lights_enabled,
+            ground_percent,
             active_session,
           )
         }))
@@ -352,7 +379,7 @@ impl AsyncHaltableJob for BrokenithmJob {
 
 #[cfg(test)]
 mod tests {
-  use super::{parse_brokenithm_message, BrokenithmMessage};
+  use super::{brokenithm_config_script, parse_brokenithm_message, BrokenithmMessage};
 
   #[test]
   fn parses_heartbeat() {
@@ -382,5 +409,17 @@ mod tests {
     assert!(parse_brokenithm_message("b000").is_none());
     assert!(parse_brokenithm_message(&format!("x{}{}", "0".repeat(32), "0".repeat(6))).is_none());
     assert!(parse_brokenithm_message(&format!("b{}{}", "0".repeat(31), "x".repeat(7))).is_none());
+  }
+
+  #[test]
+  fn builds_ipad_area_ratio_config() {
+    let config = brokenithm_config_script(65);
+    assert!(config.contains("config.keyHeight = 65"));
+    assert!(config.contains("config.lkeyHeight = 35"));
+    assert!(config.contains("keyColor"));
+
+    let clamped = brokenithm_config_script(100);
+    assert!(clamped.contains("config.keyHeight = 80"));
+    assert!(clamped.contains("config.lkeyHeight = 20"));
   }
 }
